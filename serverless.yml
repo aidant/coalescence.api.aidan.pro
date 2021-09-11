@@ -1,0 +1,120 @@
+frameworkVersion: '2'
+variablesResolutionMode: 20210326
+
+service: coalescence
+
+custom:
+  name: ${self:service}-${opt:stage, self:provider.stage}
+  domain: ${self:custom.stage.${opt:stage, self:provider.stage}.domain}
+  stage:
+    production:
+      domain: ${env:DOMAIN_NAME_PRODUCTION, 'coalescence.api.aidan.pro'}
+    staging:
+      domain: ${env:DOMAIN_NAME_STAGING, 'coalescence.api.staging.aidan.pro'}
+    development:
+      domain: ${env:DOMAIN_NAME_DEVELOPMENT, 'coalescence.api.development.aidan.pro'}
+
+provider:
+  name: aws
+  stage: development
+  region: us-east-1
+  stackName: ${self:custom.name}
+
+resources:
+  Resources:
+    Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        CorsConfiguration:
+          CorsRules:
+            - AllowedMethods: 
+                - GET
+              AllowedOrigins:
+                - '*'
+
+    CloudFrontBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref Bucket
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Action:
+                - s3:GetObject
+              Effect: Allow
+              Resource:
+                - !Join
+                  - /
+                  - - !GetAtt 
+                      - Bucket
+                      - Arn
+                    - '*'
+              Principal:
+                CanonicalUser:
+                  !GetAtt 
+                    - CloudFrontOriginAccessIdentity
+                    - S3CanonicalUserId
+      DependsOn:
+        - CloudFrontOriginAccessIdentity
+
+    CloudFrontOriginAccessIdentity:
+      Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+      Properties:
+        CloudFrontOriginAccessIdentityConfig:
+          Comment: ''
+
+    CloudFrontDistribution:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Aliases:
+            - ${self:custom.domain}
+          DefaultCacheBehavior:
+            CachePolicyId: b2884449-e4de-46a7-ac36-70bc7f1ddd6d
+            OriginRequestPolicyId: 88a5eaf4-2fd4-4709-b370-b4c650ea3fcf
+            TargetOriginId:
+              !Join
+                - ''
+                - - S3-
+                  - !Ref Bucket
+                  - .s3.
+                  - !Ref AWS::Region
+                  - .amazonaws.com
+            ViewerProtocolPolicy: redirect-to-https
+          Enabled: true
+          HttpVersion: http2
+          IPV6Enabled: true
+          Origins:
+            - S3OriginConfig:
+                OriginAccessIdentity:
+                  !Join
+                    - /
+                    - - origin-access-identity/cloudfront
+                      - !Ref CloudFrontOriginAccessIdentity
+              DomainName:
+                !Join
+                  - ''
+                  - - !Ref Bucket
+                    - .s3.
+                    - !Ref AWS::Region
+                    - .amazonaws.com
+              Id:
+                !Join
+                  - ''
+                  - - S3-
+                    - !Ref Bucket
+                    - .s3.
+                    - !Ref AWS::Region
+                    - .amazonaws.com
+          ViewerCertificate:
+            AcmCertificateArn: !Ref CloudFrontCertificate
+            MinimumProtocolVersion: TLSv1.2_2019
+            SslSupportMethod: sni-only
+      DependsOn:
+        - CloudFrontOriginAccessIdentity
+
+    CloudFrontCertificate:
+      Type: AWS::CertificateManager::Certificate
+      Properties:
+        DomainName: ${self:custom.domain}
+        ValidationMethod: DNS
